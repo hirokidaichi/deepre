@@ -1,2 +1,2 @@
-# mcp-deepresearch
+# deepresearch
 local mcp server perplexity
