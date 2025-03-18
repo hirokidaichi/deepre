@@ -4,9 +4,8 @@ import { Command } from "@cliffy/command";
 import { Input, Select } from "@cliffy/prompt";
 import { ensureDir } from "@std/fs";
 import { join } from "@std/path";
-
-// deep_research.tsからインポート
-import { addCitationsToReport, deepResearch } from "./deep_research.ts";
+import { CitationManager } from "./citations.ts";
+import { deepResearch } from "./deep_research.ts";
 // generate-filename.tsからファイル名生成関数をインポート
 import { generateFilenameFromTheme } from "./generate-filename.ts";
 
@@ -127,9 +126,9 @@ await new Command()
       );
 
       // 引用を追加
-      const reportWithCitations = addCitationsToReport(
+      const citationManager = new CitationManager(result.citations);
+      const reportWithCitations = await citationManager.addCitationsToReport(
         result.finalReport,
-        result.citations,
       );
 
       // 結果をファイルに保存

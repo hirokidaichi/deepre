@@ -1,8 +1,7 @@
 // 調査機能の実装
-import { Citation, createGeminiClient, extractCitations } from "./gemini.ts";
-
-// リダイレクト先のURLを取得する関数をインポート
-import { revealRedirect } from "./reveal-redirect.ts";
+import { createGeminiClient } from "./gemini.ts";
+import { CitationManager } from "./citations.ts";
+import type { Citation } from "./types.ts";
 
 // 複数ステップの研究調査を実行する関数
 export async function deepResearch(
@@ -28,7 +27,7 @@ export async function deepResearch(
 
   // 2. 反復的な調査プロセスの実行
   let currentFindings = "";
-  let allCitations: Citation[] = [];
+  let citationManager = new CitationManager();
   const intermediateResults: {
     step: number;
     content: string;
@@ -65,17 +64,17 @@ export async function deepResearch(
 
     console.log(`[INFO] ステップ ${step} の調査を完了しました`);
 
-    // 引用情報の抽出
-    const stepCitations = extractCitations(stepResponse);
-    if (stepCitations.length > 0) {
-      allCitations = [...allCitations, ...stepCitations];
-    }
+    // 引用情報の抽出と追加
+    const stepCitationManager = CitationManager.fromResponse(stepResponse);
+    citationManager = citationManager.addAll(
+      stepCitationManager.getCitations(),
+    );
 
     // 結果を保存
     intermediateResults.push({
       step: step,
       content: stepFindings,
-      citations: stepCitations,
+      citations: stepCitationManager.getCitations(),
     });
 
     // 次のステップのための現在の発見を更新
@@ -114,125 +113,30 @@ export async function deepResearch(
 
   console.log(`[INFO] 最終レポートの生成が完了しました`);
 
-  // 最終レポートからの引用情報の抽出
-  const finalStepCitations = extractCitations(finalResult.response);
-  if (finalStepCitations.length > 0) {
-    allCitations = [...allCitations, ...finalStepCitations];
-  }
+  // 最終レポートからの引用情報の抽出と追加
+  citationManager = citationManager.addAll(
+    CitationManager.fromResponse(finalResult.response).getCitations(),
+  );
 
   // すべての引用情報をデバッグ出力
-  console.log(`\n[INFO] 収集されたすべての引用情報: ${allCitations.length}件`);
+  console.log(
+    `\n[INFO] 収集されたすべての引用情報: ${citationManager.getCitations().length}件`,
+  );
 
   // 重複する引用情報を削除
-  const uniqueCitations = allCitations.filter((citation, index, self) =>
-    self.findIndex((c) => c.uri === citation.uri) === index
+  const uniqueCitationManager = citationManager.deduplicate();
+  console.log(
+    `\n[INFO] 重複除去後の引用情報: ${uniqueCitationManager.getCitations().length}件`,
   );
-  console.log(`\n[INFO] 重複除去後の引用情報: ${uniqueCitations.length}件`);
 
   // 引用情報を含む最終結果を返す
   return {
     question: researchQuestion,
     plan: researchPlan,
     intermediateResults: intermediateResults,
-    finalReport: finalReport,
-    citations: uniqueCitations,
+    finalReport: await uniqueCitationManager.addCitationsToReport(finalReport),
+    citations: uniqueCitationManager.getCitations(),
   };
 }
 
-// 引用をマークダウンリンクに変換する関数
-export async function addCitationsToReport(
-  report: string,
-  citations: Citation[],
-): Promise<string> {
-  // 引用情報がなければそのまま返す
-  if (!citations || citations.length === 0) {
-    console.log(`[WARNING] 引用情報がありません。レポートをそのまま返します。`);
-    return report;
-  }
-
-  console.log(`[INFO] 引用情報の処理を開始: ${citations.length}件`);
-
-  // 重複しない引用情報のみを抽出
-  const uniqueCitations = citations.filter((citation, index, self) =>
-    citation.uri && self.findIndex((c) => c.uri === citation.uri) === index
-  );
-
-  console.log(`[INFO] 重複除去後の引用情報: ${uniqueCitations.length}件`);
-
-  // 引用情報を記録するための配列
-  const processedCitations: Citation[] = [];
-
-  // 既存の [n] パターンを検出（Geminiが生成した引用番号）
-  const citationPattern = /\[(\d+)\]/g;
-  const existingCitations = new Map<number, Citation>();
-
-  // 1. まず既存の引用番号を検出し、実際の引用情報と対応付ける
-  let match;
-  let cleanedReport = report;
-  const matches = Array.from(report.matchAll(citationPattern));
-
-  if (matches.length > 0) {
-    console.log(`[INFO] レポート内で検出された引用番号: ${matches.length}件`);
-
-    // 最大の引用番号を特定
-    const maxNum = Math.max(...matches.map((m) => parseInt(m[1], 10)));
-
-    // 使用された引用番号とCitationオブジェクトを対応付ける
-    for (let i = 1; i <= maxNum; i++) {
-      if (i <= uniqueCitations.length) {
-        existingCitations.set(i, uniqueCitations[i - 1]);
-        processedCitations.push(uniqueCitations[i - 1]);
-      }
-    }
-  }
-
-  // 2. テキスト中にある引用情報（startIndexとendIndexを持つもの）を処理
-  const indexBasedCitations = uniqueCitations.filter(
-    (citation) =>
-      typeof citation.startIndex === "number" &&
-      typeof citation.endIndex === "number",
-  );
-
-  // startIndexとendIndexを持つ引用を処理（Geminiの検索による引用情報）
-  if (indexBasedCitations.length > 0) {
-    console.log(
-      `[INFO] インデックスベースの引用: ${indexBasedCitations.length}件`,
-    );
-
-    // startIndexとendIndexの情報は処理しない
-    // これらの引用は通常、レポート内に[n]形式で既に含まれているため
-    for (const citation of indexBasedCitations) {
-      // まだ処理されていない引用情報を追加
-      if (!processedCitations.some((pc) => pc.uri === citation.uri)) {
-        processedCitations.push(citation);
-      }
-    }
-  }
-
-  // 3. まだ処理されていない引用情報があれば追加
-  for (const citation of uniqueCitations) {
-    if (!processedCitations.some((pc) => pc.uri === citation.uri)) {
-      processedCitations.push(citation);
-    }
-  }
-
-  // 4. 参考文献リストを追加
-  if (processedCitations.length > 0) {
-    cleanedReport += "\n\n## 参考文献\n\n";
-
-    // リダイレクト先のURLを並行して取得
-    const finalUrls = await Promise.all(
-      processedCitations.map((citation) =>
-        citation.uri ? revealRedirect(citation.uri) : Promise.resolve("")
-      ),
-    );
-
-    processedCitations.forEach((citation, index) => {
-      cleanedReport += `[${index + 1}] ${citation.title || "参考文献"}: ${
-        finalUrls[index] || citation.uri
-      }\n`;
-    });
-  }
-
-  return cleanedReport;
-}
+// CitationManagerのメソッドを使用するため、addCitationsToReportのエクスポートは不要になりました
