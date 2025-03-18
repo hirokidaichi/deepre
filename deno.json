@@ -7,7 +7,10 @@
     "@std/cli": "jsr:@std/cli@^0.224.7",
     "@std/fs": "jsr:@std/fs@^0.219.1",
     "@std/path": "jsr:@std/path@^0.219.1",
-    "@std/testing": "jsr:@std/testing@^0.219.1"
+    "@std/testing": "jsr:@std/testing@^0.219.1",
+    "@std/testing/bdd": "jsr:@std/testing@^0.219.1/bdd",
+    "@std/testing/mock": "jsr:@std/testing@^0.219.1/mock",
+    "@std/testing/time": "jsr:@std/testing@^0.219.1/time"
   },
   "tasks": {
     "lint": "deno lint",

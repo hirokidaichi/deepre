@@ -1,65 +1,22 @@
-// DenoでGemini APIを使用するためのクライアント実装
-import {
-  GoogleGenerativeAI,
-  HarmBlockThreshold,
-  HarmCategory,
-} from "npm:@google/generative-ai";
+// 調査機能の実装
+import { Citation, createGeminiClient, extractCitations } from "./gemini.ts";
 
-// Gemini APIからのレスポンスに対する型定義
-interface Citation {
-  startIndex?: number;
-  endIndex?: number;
-  uri: string;
-  title?: string;
-}
-
-// Google Generative AI API用の基本的なインターフェース
-interface GenerationConfig {
-  temperature?: number;
-  topP?: number;
-  topK?: number;
-  maxOutputTokens?: number;
-}
-
-interface GroundingMetadata {
-  webSearchCitations?: Array<{
-    startIndex: number;
-    endIndex: number;
-    uri: string;
-    title: string;
-  }>;
-  googleSearchQueries?: Array<{
-    searchQuery: string;
-  }>;
-}
-
-interface Response {
-  text: () => string;
-  groundingMetadata?: GroundingMetadata;
-}
-
-interface Result {
-  response: Response;
-}
+// リダイレクト先のURLを取得する関数をインポート
+import { revealRedirect } from "./reveal-redirect.ts";
 
 // 複数ステップの研究調査を実行する関数
-async function deepResearch(
+export async function deepResearch(
   apiKey: string,
   researchQuestion: string,
   maxIterations = 3,
   model = "gemini-2.0-flash",
 ) {
-  const genAI = new GoogleGenerativeAI(apiKey);
+  // Geminiクライアントの初期化
+  const geminiClient = createGeminiClient(apiKey, model);
+  const planModel = geminiClient.createPlanModel();
+  const researchModel = geminiClient.createResearchModel();
 
   // 1. 研究計画の生成
-  const planModel = genAI.getGenerativeModel({
-    model: model,
-    generationConfig: {
-      temperature: 0.2,
-      maxOutputTokens: 4096,
-    },
-  });
-
   const planPrompt =
     `以下のテーマについて、段階的に調査するための${maxIterations}ステップの具体的な研究計画を作成してください。
   各ステップでは、前のステップで得られた情報を基に、より深く掘り下げるべき点を明確にしてください。
@@ -70,23 +27,13 @@ async function deepResearch(
   console.log("【研究計画】\n", researchPlan);
 
   // 2. 反復的な調査プロセスの実行
-  // @ts-ignore - Gemini 2.0ではtools.google_searchが使用できるが型定義が追いついていない
-  const researchModel = genAI.getGenerativeModel({
-    model: model,
-    generationConfig: {
-      temperature: 0.0,
-      maxOutputTokens: 8192,
-    },
-    tools: [{
-      // Gemini 2.0では'google_search'を使用
-      // @ts-ignore - google_searchはGemini 2.0で使用できるが型定義が存在しない
-      google_search: {},
-    }],
-  });
-
   let currentFindings = "";
   let allCitations: Citation[] = [];
-  let intermediateResults: any[] = [];
+  const intermediateResults: {
+    step: number;
+    content: string;
+    citations: Citation[];
+  }[] = [];
 
   // 各ステップの調査を実行
   for (let step = 1; step <= maxIterations; step++) {
@@ -116,20 +63,19 @@ async function deepResearch(
     const stepResponse = stepResult.response;
     const stepFindings = stepResponse.text();
 
-    // 引用情報の収集
-    // @google/generative-aiライブラリの仕様に合わせて引用情報を取得
-    // @ts-ignore - citationsプロパティは型定義に存在しないが実際には存在する
-    const citations = stepResponse.citations || [];
+    console.log(`[INFO] ステップ ${step} の調査を完了しました`);
 
-    if (citations.length > 0) {
-      allCitations = [...allCitations, ...citations];
+    // 引用情報の抽出
+    const stepCitations = extractCitations(stepResponse);
+    if (stepCitations.length > 0) {
+      allCitations = [...allCitations, ...stepCitations];
     }
 
     // 結果を保存
     intermediateResults.push({
       step: step,
       content: stepFindings,
-      citations: citations,
+      citations: stepCitations,
     });
 
     // 次のステップのための現在の発見を更新
@@ -166,12 +112,22 @@ async function deepResearch(
   const finalResult = await researchModel.generateContent(finalPrompt);
   const finalReport = finalResult.response.text();
 
-  // 最終結果からも引用情報を収集
-  // @ts-ignore - citationsプロパティは型定義に存在しないが実際には存在する
-  const finalCitations = finalResult.response.citations || [];
-  if (finalCitations.length > 0) {
-    allCitations = [...allCitations, ...finalCitations];
+  console.log(`[INFO] 最終レポートの生成が完了しました`);
+
+  // 最終レポートからの引用情報の抽出
+  const finalStepCitations = extractCitations(finalResult.response);
+  if (finalStepCitations.length > 0) {
+    allCitations = [...allCitations, ...finalStepCitations];
   }
+
+  // すべての引用情報をデバッグ出力
+  console.log(`\n[INFO] 収集されたすべての引用情報: ${allCitations.length}件`);
+
+  // 重複する引用情報を削除
+  const uniqueCitations = allCitations.filter((citation, index, self) =>
+    self.findIndex((c) => c.uri === citation.uri) === index
+  );
+  console.log(`\n[INFO] 重複除去後の引用情報: ${uniqueCitations.length}件`);
 
   // 引用情報を含む最終結果を返す
   return {
@@ -179,108 +135,104 @@ async function deepResearch(
     plan: researchPlan,
     intermediateResults: intermediateResults,
     finalReport: finalReport,
-    citations: allCitations,
+    citations: uniqueCitations,
   };
 }
 
 // 引用をマークダウンリンクに変換する関数
-function addCitationsToReport(report: string, citations: Citation[]): string {
+export async function addCitationsToReport(
+  report: string,
+  citations: Citation[],
+): Promise<string> {
   // 引用情報がなければそのまま返す
   if (!citations || citations.length === 0) {
+    console.log(`[WARNING] 引用情報がありません。レポートをそのまま返します。`);
     return report;
   }
 
-  let reportWithCitations = report;
+  console.log(`[INFO] 引用情報の処理を開始: ${citations.length}件`);
+
+  // 重複しない引用情報のみを抽出
+  const uniqueCitations = citations.filter((citation, index, self) =>
+    citation.uri && self.findIndex((c) => c.uri === citation.uri) === index
+  );
+
+  console.log(`[INFO] 重複除去後の引用情報: ${uniqueCitations.length}件`);
+
+  // 引用情報を記録するための配列
   const processedCitations: Citation[] = [];
 
-  // 引用箇所にリンクを追加
-  for (let i = 0; i < citations.length; i++) {
-    const citation = citations[i];
+  // 既存の [n] パターンを検出（Geminiが生成した引用番号）
+  const citationPattern = /\[(\d+)\]/g;
+  const existingCitations = new Map<number, Citation>();
 
-    // 有効な引用情報のみ処理する
-    if (!citation.uri) continue;
+  // 1. まず既存の引用番号を検出し、実際の引用情報と対応付ける
+  let match;
+  let cleanedReport = report;
+  const matches = Array.from(report.matchAll(citationPattern));
 
-    // 重複引用を除外
-    if (processedCitations.some((c) => c.uri === citation.uri)) continue;
-    processedCitations.push(citation);
+  if (matches.length > 0) {
+    console.log(`[INFO] レポート内で検出された引用番号: ${matches.length}件`);
 
-    const citationId = processedCitations.length;
+    // 最大の引用番号を特定
+    const maxNum = Math.max(...matches.map((m) => parseInt(m[1], 10)));
 
-    // 引用箇所の識別
-    const startIndex = citation.startIndex;
-    const endIndex = citation.endIndex;
-
-    // startIndexとendIndexが有効な範囲内かチェック
-    if (
-      startIndex === undefined || endIndex === undefined ||
-      startIndex < 0 || endIndex > reportWithCitations.length ||
-      startIndex >= endIndex
-    ) {
-      continue;
+    // 使用された引用番号とCitationオブジェクトを対応付ける
+    for (let i = 1; i <= maxNum; i++) {
+      if (i <= uniqueCitations.length) {
+        existingCitations.set(i, uniqueCitations[i - 1]);
+        processedCitations.push(uniqueCitations[i - 1]);
+      }
     }
-
-    // 該当部分のテキスト
-    const citedText = reportWithCitations.substring(startIndex, endIndex);
-
-    // リンク付きテキストに置換
-    const linkedText = `[${citedText}[${citationId}]](${citation.uri})`;
-
-    // 文字列を置換する際に、インデックスのずれを考慮
-    // （前の置換で文字列の長さが変わるため）
-    reportWithCitations = reportWithCitations.substring(0, startIndex) +
-      linkedText +
-      reportWithCitations.substring(endIndex);
   }
 
-  // 参考文献リストを追加
+  // 2. テキスト中にある引用情報（startIndexとendIndexを持つもの）を処理
+  const indexBasedCitations = uniqueCitations.filter(
+    (citation) =>
+      typeof citation.startIndex === "number" &&
+      typeof citation.endIndex === "number",
+  );
+
+  // startIndexとendIndexを持つ引用を処理（Geminiの検索による引用情報）
+  if (indexBasedCitations.length > 0) {
+    console.log(
+      `[INFO] インデックスベースの引用: ${indexBasedCitations.length}件`,
+    );
+
+    // startIndexとendIndexの情報は処理しない
+    // これらの引用は通常、レポート内に[n]形式で既に含まれているため
+    for (const citation of indexBasedCitations) {
+      // まだ処理されていない引用情報を追加
+      if (!processedCitations.some((pc) => pc.uri === citation.uri)) {
+        processedCitations.push(citation);
+      }
+    }
+  }
+
+  // 3. まだ処理されていない引用情報があれば追加
+  for (const citation of uniqueCitations) {
+    if (!processedCitations.some((pc) => pc.uri === citation.uri)) {
+      processedCitations.push(citation);
+    }
+  }
+
+  // 4. 参考文献リストを追加
   if (processedCitations.length > 0) {
-    reportWithCitations += "\n\n## 参考文献\n\n";
+    cleanedReport += "\n\n## 参考文献\n\n";
+
+    // リダイレクト先のURLを並行して取得
+    const finalUrls = await Promise.all(
+      processedCitations.map((citation) =>
+        citation.uri ? revealRedirect(citation.uri) : Promise.resolve("")
+      ),
+    );
+
     processedCitations.forEach((citation, index) => {
-      reportWithCitations += `[${index + 1}] [${
-        citation.title || "タイトルなし"
-      }](${citation.uri})\n`;
+      cleanedReport += `[${index + 1}] ${citation.title || "参考文献"}: ${
+        finalUrls[index] || citation.uri
+      }\n`;
     });
   }
 
-  return reportWithCitations;
-}
-
-// メイン関数の実行
-async function main() {
-  const apiKey = Deno.env.get("GEMINI_API_KEY");
-  if (!apiKey) {
-    console.error("環境変数GEMINI_API_KEYが設定されていません。");
-    Deno.exit(1);
-  }
-
-  try {
-    const result = await deepResearch(
-      apiKey,
-      "量子コンピューティングの最新の商業応用と将来性について",
-      3, // 3ステップで調査
-    );
-
-    console.log("\n====== 最終レポート ======\n");
-
-    // 引用をリンクとして追加
-    const reportWithCitations = addCitationsToReport(
-      result.finalReport,
-      result.citations,
-    );
-    console.log(reportWithCitations);
-
-    // マークダウンファイルとして保存
-    await Deno.writeTextFile(
-      "quantum_computing_report.md",
-      reportWithCitations,
-    );
-    console.log("\nレポートをquantum_computing_report.mdに保存しました。");
-  } catch (error) {
-    console.error("エラーが発生しました:", error);
-  }
-}
-
-// スクリプト実行
-if (import.meta.main) {
-  main();
+  return cleanedReport;
 }
