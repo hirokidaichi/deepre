@@ -1,7 +1,6 @@
 // 調査機能の実装
 import { createGeminiClient } from "./gemini.ts";
-import { CitationManager } from "./citations.ts";
-import type { Citation } from "./types.ts";
+//import { CitationManager } from "./citations.ts";
 
 // 複数ステップの研究調査を実行する関数
 export async function deepResearch(
@@ -27,11 +26,9 @@ export async function deepResearch(
 
   // 2. 反復的な調査プロセスの実行
   let currentFindings = "";
-  let citationManager = new CitationManager();
   const intermediateResults: {
     step: number;
     content: string;
-    citations: Citation[];
   }[] = [];
 
   // 各ステップの調査を実行
@@ -64,21 +61,14 @@ export async function deepResearch(
 
     console.log(`[INFO] ステップ ${step} の調査を完了しました`);
 
-    // 引用情報の抽出と追加
-    const stepCitationManager = CitationManager.fromResponse(stepResponse);
-    citationManager = citationManager.addAll(
-      stepCitationManager.getCitations(),
-    );
-
     // 結果を保存
     intermediateResults.push({
       step: step,
-      content: stepFindings,
-      citations: stepCitationManager.getCitations(),
+      content: stepFindings.replace(/\[\d+\]/g, ""),
     });
 
     // 次のステップのための現在の発見を更新
-    currentFindings = stepFindings;
+    currentFindings = stepFindings.replace(/\[\d+\]/g, "");
 
     console.log(
       `ステップ ${step} の調査結果:\n`,
@@ -88,55 +78,41 @@ export async function deepResearch(
 
   // 3. 最終レポートの生成
   const finalPrompt =
-    `あなたは研究者として、以下の複数ステップの調査結果から最終的な包括的レポートを作成してください。
-  各ステップの調査結果を統合し、矛盾点を解決し、最も重要な発見をハイライトしてください。
-  
-  調査テーマ: ${researchQuestion}
-  
+    `あなたは研究者として、以下の研究テーマに関する複数ステップの調査結果から、最終的な包括的レポートを作成してください。
+
+  研究テーマ: ${researchQuestion}
+
+  このテーマに関して、以下の調査結果が得られています：
   ${
       intermediateResults.map((result, index) =>
         `===== ステップ${index + 1}の調査結果 =====\n${result.content}`
       ).join("\n\n")
     }
   
-  以上の調査結果をもとに、以下の構造で包括的な最終レポートを作成してください:
-  1. 要約（主要な発見のまとめ）
-  2. 背景と文脈
-  3. 主要な発見（各ポイントに見出しをつけて整理）
-  4. 議論と分析
-  5. 結論と示唆
+  上記の調査結果を統合し、以下の点に特に注意してレポートを作成してください：
+  1. 研究テーマに直接関連する重要な発見を優先的に取り上げる
+  2. テーマから外れた内容は省略するか、必要最小限の言及に留める
+  3. 異なるステップで得られた関連する情報を適切に統合する
+  4. 矛盾する情報がある場合は、より信頼性の高い情報を優先する
   
-  レポートは事実に基づき、明確かつ構造化された形式で作成してください。`;
+  レポートは事実に基づき、明確かつ構造化された形式で作成してください。
+  また、各セクションが研究テーマに対してどのように関連しているかを明確にしてください。`;
 
   const finalResult = await researchModel.generateContent(finalPrompt);
   const finalReport = finalResult.response.text();
 
-  console.log(`[INFO] 最終レポートの生成が完了しました`);
-
-  // 最終レポートからの引用情報の抽出と追加
-  citationManager = citationManager.addAll(
-    CitationManager.fromResponse(finalResult.response).getCitations(),
-  );
-
-  // すべての引用情報をデバッグ出力
-  console.log(
-    `\n[INFO] 収集されたすべての引用情報: ${citationManager.getCitations().length}件`,
-  );
+  // 最終レポートの引用情報のみを使用
+  //const citationManager = CitationManager.fromResponse(finalResult.response);
 
   // 重複する引用情報を削除
-  const uniqueCitationManager = citationManager.deduplicate();
-  console.log(
-    `\n[INFO] 重複除去後の引用情報: ${uniqueCitationManager.getCitations().length}件`,
-  );
+  //const uniqueCitationManager = citationManager.deduplicate();
 
   // 引用情報を含む最終結果を返す
   return {
     question: researchQuestion,
-    plan: researchPlan,
+    plan: researchPlan.replace(/\[\d+\]/g, ""),
     intermediateResults: intermediateResults,
-    finalReport: await uniqueCitationManager.addCitationsToReport(finalReport),
-    citations: uniqueCitationManager.getCitations(),
+    finalReport: finalReport,
+    //citations: uniqueCitationManager.getCitations(),
   };
 }
-
-// CitationManagerのメソッドを使用するため、addCitationsToReportのエクスポートは不要になりました

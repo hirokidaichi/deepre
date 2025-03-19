@@ -166,6 +166,7 @@ export class CitationManager {
       if (chunks.length === 0 || supports.length === 0) {
         return new CitationManager();
       }
+      console.log(JSON.stringify(groundingMetadata, null, 2));
 
       // groundingChunksからURLとタイトルの情報を取得
       const urlMap = new Map<number, { uri: string; title: string }>();

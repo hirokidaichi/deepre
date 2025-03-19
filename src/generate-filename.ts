@@ -11,7 +11,6 @@ export async function generateFilenameFromTheme(
   apiKey: string,
   theme: string,
 ): Promise<string> {
-  console.log(`[INFO] テーマ「${theme}」からファイル名を生成します...`);
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
     model: "gemini-1.5-flash",
@@ -37,37 +36,8 @@ export async function generateFilenameFromTheme(
 
 ファイル名の候補: `;
 
-  try {
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const filename = response.text().trim();
-
-    // 正しい形式かチェック（小文字、ハイフン区切り、3-4単語）
-    if (/^[a-z]+(-[a-z]+){2,3}$/.test(filename)) {
-      console.log(`[INFO] 生成されたファイル名: ${filename}`);
-      return filename;
-    } else {
-      // フォールバック: テーマを英数字とハイフンのみに変換
-      console.log(
-        `[WARNING] 生成されたファイル名の形式が不適切です: ${filename}`,
-      );
-      const fallbackName = theme
-        .toLowerCase()
-        .replace(/\s+/g, "-")
-        .replace(/[^\w\-]/g, "")
-        .substring(0, 30);
-      console.log(`[INFO] フォールバックファイル名: ${fallbackName}`);
-      return fallbackName;
-    }
-  } catch (error) {
-    console.error(`[ERROR] ファイル名生成中にエラーが発生しました:`, error);
-    // エラー時のフォールバック: テーマを英数字とハイフンのみに変換
-    const fallbackName = theme
-      .toLowerCase()
-      .replace(/\s+/g, "-")
-      .replace(/[^\w\-]/g, "")
-      .substring(0, 30);
-    console.log(`[INFO] フォールバックファイル名: ${fallbackName}`);
-    return fallbackName;
-  }
+  const result = await model.generateContent(prompt);
+  const response = await result.response;
+  const filename = response.text().trim();
+  return filename;
 }

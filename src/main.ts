@@ -4,7 +4,7 @@ import { Command } from "@cliffy/command";
 import { Input, Select } from "@cliffy/prompt";
 import { ensureDir } from "@std/fs";
 import { join } from "@std/path";
-import { CitationManager } from "./citations.ts";
+//import { _ } from "./citations.ts";
 import { deepResearch } from "./deep_research.ts";
 // generate-filename.tsからファイル名生成関数をインポート
 import { generateFilenameFromTheme } from "./generate-filename.ts";
@@ -27,18 +27,12 @@ await new Command()
   .option("-i, --iterations <number:number>", "調査反復回数", {
     default: 3,
   })
-  .option(
-    "--use-english-filename <bool:boolean>",
-    "英語のファイル名を生成するかどうか（デフォルト: true）",
-    { default: true },
-  )
   .arguments("[テーマ:string]")
   .action(async (options: {
     apiKey?: string;
     outputDir: string;
     model: string;
     iterations: number;
-    useEnglishFilename: boolean;
   }, theme?: string) => {
     // API KEYの確認
     let apiKey = options.apiKey;
@@ -90,21 +84,10 @@ await new Command()
     await ensureDir(options.outputDir);
 
     // ファイル名を生成
-    let basename;
+
     const timestamp =
       new Date().toISOString().replace(/[:.]/g, "-").split("T")[0];
-
-    if (options.useEnglishFilename) {
-      // AIを使った英語ファイル名生成
-      basename = await generateFilenameFromTheme(apiKey, researchTheme);
-    } else {
-      // 従来のファイル名生成方法
-      basename = researchTheme
-        .replace(/[^\w\s]/g, "")
-        .replace(/\s+/g, "_")
-        .toLowerCase()
-        .substring(0, 30);
-    }
+    const basename = await generateFilenameFromTheme(apiKey, researchTheme);
 
     const filename = `${basename}_${timestamp}.md`;
     const outputPath = join(options.outputDir, filename);
@@ -126,14 +109,14 @@ await new Command()
       );
 
       // 引用を追加
-      const citationManager = new CitationManager(result.citations);
+      /*const citationManager = new CitationManager(result.citations);
       const reportWithCitations = await citationManager.addCitationsToReport(
         result.finalReport,
-      );
+      );*/
 
       // 結果をファイルに保存
-      const resolvedReport = await reportWithCitations;
-      await Deno.writeTextFile(outputPath, resolvedReport);
+      //const resolvedReport = await reportWithCitations;
+      await Deno.writeTextFile(outputPath, result.finalReport);
 
       console.log(`\n====== 調査完了 ======`);
       console.log(`レポートを ${outputPath} に保存しました`);
