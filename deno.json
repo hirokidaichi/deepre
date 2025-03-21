@@ -18,6 +18,7 @@
     "fmt": "deno fmt",
     "test": "deno test -A",
     "check-all": "deno task lint && deno task check && deno task fmt && deno task test",
-    "deepre": "deno run -A src/main.ts"
+    "deepre": "deno run -A src/main.ts",
+    "install": "deno install --config deno.json --global -A -f -n deepre src/main.ts"
   }
 }

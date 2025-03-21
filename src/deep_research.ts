@@ -2,117 +2,236 @@
 import { createGeminiClient } from "./gemini.ts";
 //import { CitationManager } from "./citations.ts";
 
-// 複数ステップの研究調査を実行する関数
+// Geminiモデルのレスポンス型
+interface GeminiResponse {
+  text: () => string;
+}
+
+// Geminiモデルの型
+interface GeminiModel {
+  generateContent: (prompt: string) => Promise<{
+    response: GeminiResponse;
+  }>;
+}
+
+interface ResearchStep {
+  step: number;
+  content: string;
+  score: number;
+  missingInfo: string[];
+}
+
+interface ResearchContext {
+  question: string;
+  currentFindings: string;
+  intermediateResults: ResearchStep[];
+  currentScore: number;
+  step: number;
+}
+
+// 調査計画を生成する関数
+async function generateResearchPlan(
+  model: GeminiModel,
+  question: string,
+): Promise<string> {
+  const planPrompt =
+    `あなたはプロフェッショナルなリサーチャーとして、以下のテーマについて調査を行います。
+  まず、このテーマについて以下の観点から分析してください：
+
+  1. テーマの本質的な問い
+  2. 期待される成果や理解すべきポイント
+  3. 潜在的な課題や注意点
+
+  その上で、効果的な調査計画を立案してください。各ステップでは：
+  - 具体的に何を明らかにするのか
+  - どのような情報を収集するのか
+  - なぜその情報が重要なのか
+  を明確にしてください。
+
+  調査テーマ: ${question}`;
+
+  const planResult = await model.generateContent(planPrompt);
+  return planResult.response.text();
+}
+
+// 調査ステップのプロンプトを生成する関数
+function generateStepPrompt(context: ResearchContext): string {
+  if (context.step === 1) {
+    return `次のテーマについて、プロフェッショナルなリサーチャーとして調査を行ってください: ${context.question}
+
+    以下の点に特に注意して情報を収集してください：
+    1. テーマに関する最新の事実や統計データ
+    2. 主要な議論や見解
+    3. 業界や分野での具体的な事例
+    4. 信頼できる情報源からの裏付けデータ
+
+    それぞれの情報について、なぜそれが重要なのか、どのように結論に貢献するのかを明確にしてください。`;
+  }
+
+  const lastStep =
+    context.intermediateResults[context.intermediateResults.length - 1];
+  return `前回の調査で以下の情報が得られました:\n${context.currentFindings}\n
+    
+    特に以下の不足している情報について重点的に調査してください：
+    ${lastStep.missingInfo.map((info) => `- ${info}`).join("\n")}
+    
+    この調査ステップでは：
+    1. 上記の不足情報を補完する具体的なデータや事例
+    2. これまでの発見に対する異なる視点や解釈
+    3. 発見した情報の実務的な意味や影響
+    4. 情報の信頼性を高めるための追加の裏付けデータ
+    
+    を収集してください。各情報について、その重要性と全体の結論への貢献を説明してください。`;
+}
+
+// 調査結果を評価する関数
+async function evaluateResearch(
+  model: GeminiModel,
+  question: string,
+  findings: string,
+): Promise<{ score: number; missingInfo: string[] }> {
+  const evaluationPrompt = `
+    プロフェッショナルなリサーチャーとして、以下の調査結果について、テーマ「${question}」に対する情報の充実度を評価してください。
+
+    調査結果:
+    ${findings}
+
+    以下の観点から評価を行い、回答してください：
+    1. 情報の具体性と正確性（事実、数字、事例の充実度）
+    2. 情報の網羅性（テーマの重要な側面をカバーできているか）
+    3. 情報の信頼性（情報源の質、裏付けの有無）
+    4. 分析の深さ（単なる事実の列挙ではなく、意味や影響の考察があるか）
+    5. 多角的な視点（異なる立場や解釈が考慮されているか）
+    6. 85点以上で最終レポートを作成するので、十分な情報があれば85点以上を返すようにしてください。
+
+    回答形式：
+    1. スコア（0-100）を<score>数字</score>の形式で
+    2. 不足している情報や追加で調べるべき点を箇条書きで
+    3. スコアの根拠を簡潔に
+    `;
+
+  const evaluation = await model.generateContent(evaluationPrompt);
+  const evaluationText = evaluation.response.text();
+
+  const scoreMatch = evaluationText.match(/<score>(\d+)<\/score>/);
+  const score = scoreMatch ? parseInt(scoreMatch[1]) : 0;
+
+  const missingInfo = evaluationText
+    .split("\n")
+    .filter((line: string) => line.trim().startsWith("-"))
+    .map((line: string) => line.trim().substring(2));
+
+  return { score, missingInfo };
+}
+
+// 最終レポートを生成する関数
+async function generateFinalReport(
+  model: GeminiModel,
+  context: ResearchContext,
+): Promise<string> {
+  const finalPrompt =
+    `プロフェッショナルなリサーチャーとして、以下のテーマに関する調査結果から、包括的な最終レポートを作成してください。
+
+  調査テーマ: ${context.question}
+
+  これまでの調査で以下の情報が得られています：
+  ${
+      context.intermediateResults.map((result) =>
+        `===== ステップ${result.step}の調査結果（充実度スコア: ${result.score}）=====\n${result.content}`
+      ).join("\n\n")
+    }
+  
+  最終レポートでは以下の点を重視してください：
+  「テーマに対する明確な回答や結論」
+  「結論を支持する具体的な事実やデータ」
+  
+  レポートは、読み手が実践的に活用できる情報を提供することを心がけ、
+  事実に基づいた客観的な分析と、実務に役立つ示唆を含めてください。`;
+
+  const finalResult = await model.generateContent(finalPrompt);
+  return finalResult.response.text();
+}
+
+// 1ステップの調査を実行する関数
+async function executeResearchStep(
+  model: GeminiModel,
+  context: ResearchContext,
+): Promise<ResearchStep> {
+  const stepPrompt = generateStepPrompt(context);
+  const stepResult = await model.generateContent(stepPrompt);
+  const stepFindings = stepResult.response.text();
+
+  const { score, missingInfo } = await evaluateResearch(
+    model,
+    context.question,
+    stepFindings,
+  );
+
+  return {
+    step: context.step,
+    content: stepFindings.replace(/\[\d+\]/g, ""),
+    score,
+    missingInfo,
+  };
+}
+
+// メインの調査実行関数
 export async function deepResearch(
   apiKey: string,
   researchQuestion: string,
   maxIterations = 3,
   model = "gemini-2.0-flash",
+  scoreThreshold = 95,
 ) {
-  // Geminiクライアントの初期化
   const geminiClient = createGeminiClient(apiKey, model);
   const planModel = geminiClient.createPlanModel();
   const researchModel = geminiClient.createResearchModel();
 
-  // 1. 研究計画の生成
-  const planPrompt =
-    `以下のテーマについて、段階的に調査するための${maxIterations}ステップの具体的な研究計画を作成してください。
-  各ステップでは、前のステップで得られた情報を基に、より深く掘り下げるべき点を明確にしてください。
-  研究テーマ: ${researchQuestion}`;
-
-  const planResult = await planModel.generateContent(planPrompt);
-  const researchPlan = planResult.response.text();
+  // 調査計画の生成
+  const researchPlan = await generateResearchPlan(planModel, researchQuestion);
   console.log("【研究計画】\n", researchPlan);
 
-  // 2. 反復的な調査プロセスの実行
-  let currentFindings = "";
-  const intermediateResults: {
-    step: number;
-    content: string;
-  }[] = [];
+  // 調査コンテキストの初期化
+  const context: ResearchContext = {
+    question: researchQuestion,
+    currentFindings: "",
+    intermediateResults: [],
+    currentScore: 0,
+    step: 1,
+  };
 
-  // 各ステップの調査を実行
-  for (let step = 1; step <= maxIterations; step++) {
+  // 反復的な調査プロセスの実行
+  while (
+    context.currentScore < scoreThreshold && context.step <= maxIterations
+  ) {
     console.log(
-      `\n====== 調査ステップ ${step}/${maxIterations} 実行中 ======\n`,
+      `\n====== 調査ステップ ${context.step}/${maxIterations} 実行中 ======\n`,
     );
 
-    // 現在のステップの調査プロンプト作成
-    let stepPrompt = "";
-    if (step === 1) {
-      // 最初のステップ
-      stepPrompt = `次のテーマについて調査してください: ${researchQuestion}\n
-      具体的な事実、数字、最新の動向について詳しく調べてください。`;
-    } else {
-      // 2回目以降のステップ - 前のステップの結果を考慮
-      stepPrompt = `前回の調査で以下の情報が得られました:\n${currentFindings}\n
-      これらの情報を踏まえて、次の点についてさらに詳しく調査してください:
-      1. 前回の調査で不足していた情報
-      2. 前回の調査で見つかった興味深いポイントの詳細
-      3. 前回見つからなかった異なる視点や反対意見
-      
-      事実と数字を重視し、情報源を明確にしてください。`;
-    }
+    const stepResult = await executeResearchStep(researchModel, context);
 
-    // 調査実行
-    const stepResult = await researchModel.generateContent(stepPrompt);
-    const stepResponse = stepResult.response;
-    const stepFindings = stepResponse.text();
+    context.intermediateResults.push(stepResult);
+    context.currentFindings = stepResult.content;
+    context.currentScore = stepResult.score;
 
-    console.log(`[INFO] ステップ ${step} の調査を完了しました`);
-
-    // 結果を保存
-    intermediateResults.push({
-      step: step,
-      content: stepFindings.replace(/\[\d+\]/g, ""),
-    });
-
-    // 次のステップのための現在の発見を更新
-    currentFindings = stepFindings.replace(/\[\d+\]/g, "");
-
+    console.log(`[INFO] ステップ ${context.step} の調査を完了しました`);
+    console.log(`[INFO] 情報充実度スコア: ${stepResult.score}`);
     console.log(
-      `ステップ ${step} の調査結果:\n`,
-      stepFindings.substring(0, 300) + "...",
+      `ステップ ${context.step} の調査結果:\n`,
+      stepResult.content.substring(0, 300) + "...",
     );
+
+    context.step++;
   }
 
-  // 3. 最終レポートの生成
-  const finalPrompt =
-    `あなたは研究者として、以下の研究テーマに関する複数ステップの調査結果から、最終的な包括的レポートを作成してください。
+  // 最終レポートの生成
+  const finalReport = await generateFinalReport(researchModel, context);
 
-  研究テーマ: ${researchQuestion}
-
-  このテーマに関して、以下の調査結果が得られています：
-  ${
-      intermediateResults.map((result, index) =>
-        `===== ステップ${index + 1}の調査結果 =====\n${result.content}`
-      ).join("\n\n")
-    }
-  
-  上記の調査結果を統合し、以下の点に特に注意してレポートを作成してください：
-  1. 研究テーマに直接関連する重要な発見を優先的に取り上げる
-  2. テーマから外れた内容は省略するか、必要最小限の言及に留める
-  3. 異なるステップで得られた関連する情報を適切に統合する
-  4. 矛盾する情報がある場合は、より信頼性の高い情報を優先する
-  
-  レポートは事実に基づき、明確かつ構造化された形式で作成してください。
-  また、各セクションが研究テーマに対してどのように関連しているかを明確にしてください。`;
-
-  const finalResult = await researchModel.generateContent(finalPrompt);
-  const finalReport = finalResult.response.text();
-
-  // 最終レポートの引用情報のみを使用
-  //const citationManager = CitationManager.fromResponse(finalResult.response);
-
-  // 重複する引用情報を削除
-  //const uniqueCitationManager = citationManager.deduplicate();
-
-  // 引用情報を含む最終結果を返す
   return {
     question: researchQuestion,
     plan: researchPlan.replace(/\[\d+\]/g, ""),
-    intermediateResults: intermediateResults,
-    finalReport: finalReport,
-    //citations: uniqueCitationManager.getCitations(),
+    intermediateResults: context.intermediateResults,
+    finalReport,
+    finalScore: context.currentScore,
   };
 }

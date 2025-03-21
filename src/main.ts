@@ -25,7 +25,7 @@ await new Command()
     default: "gemini-2.0-flash",
   })
   .option("-i, --iterations <number:number>", "調査反復回数", {
-    default: 3,
+    default: 10,
   })
   .arguments("[テーマ:string]")
   .action(async (options: {
