@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/testing@^0.219.1/asserts";
+import { assertEquals } from "@std/assert";
 import {
   type GroundingMetadata,
   GroundingProcessor,

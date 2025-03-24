@@ -1,4 +1,4 @@
-import { GenerativeModel } from "npm:@google/generative-ai@0.24.0";
+import { GenerativeModel } from "@google/generative-ai";
 
 // 調査ステップの型定義
 export interface ResearchStep {

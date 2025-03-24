@@ -1,8 +1,5 @@
 // 調査機能の実装
-import {
-  GenerativeModel,
-  GoogleGenerativeAI,
-} from "npm:@google/generative-ai@0.24.0";
+import { GenerativeModel, GoogleGenerativeAI } from "@google/generative-ai";
 import {
   GeminiGroundingMetadata,
   GroundingMetadata,

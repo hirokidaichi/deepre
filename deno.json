@@ -2,7 +2,7 @@
   "imports": {
     "@cliffy/command": "jsr:@cliffy/command@^1.0.0-rc.7",
     "@cliffy/prompt": "jsr:@cliffy/prompt@^1.0.0-rc.7",
-    "@google/generative-ai": "npm:@google/generative-ai@^0.24.0",
+    "@google/generative-ai": "npm:@google/generative-ai@0.24.0",
     "@std/assert": "jsr:@std/assert@^0.219.1",
     "@std/cli": "jsr:@std/cli@^0.224.7",
     "@std/fs": "jsr:@std/fs@^0.219.1",

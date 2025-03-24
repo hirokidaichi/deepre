@@ -26,8 +26,6 @@
     "jsr:@std/path@~1.0.6": "1.0.8",
     "jsr:@std/testing@~0.219.1": "0.219.1",
     "jsr:@std/text@~1.0.7": "1.0.11",
-    "npm:@google/generative-ai@*": "0.24.0",
-    "npm:@google/generative-ai@0.24": "0.24.0",
     "npm:@google/generative-ai@0.24.0": "0.24.0"
   },
   "jsr": {
@@ -348,7 +346,7 @@
       "jsr:@std/fs@~0.219.1",
       "jsr:@std/path@~0.219.1",
       "jsr:@std/testing@~0.219.1",
-      "npm:@google/generative-ai@0.24"
+      "npm:@google/generative-ai@0.24.0"
     ]
   }
 }

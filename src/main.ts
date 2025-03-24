@@ -1,6 +1,6 @@
 #!/usr/bin/env -S deno run -A
 
-import { Command } from "jsr:@cliffy/command@^1.0.0-rc.7";
+import { Command } from "@cliffy/command";
 // Removed unused import
 import { deepResearchWithGrounding } from "./deep_research.ts";
 import {
