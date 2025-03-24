@@ -3,10 +3,7 @@
 import { Command } from "@cliffy/command";
 // Removed unused import
 import { deepResearchWithGrounding } from "./deep_research.ts";
-import {
-  generateFilenameFromTheme,
-  generateUniqueFilename,
-} from "./generate-filename.ts";
+import { generate } from "./generate-filename.ts";
 
 /**
  * メインの処理を実行する関数
@@ -18,7 +15,11 @@ async function main() {
     .description("深い調査を行うCLIツール")
     .arguments("<theme:string>")
     .option("-k, --api-key <key:string>", "Google AI Studio APIキー")
-    .option("-o, --output <file:string>", "出力ファイルのパス")
+    .option(
+      "-o, --output <file:string>",
+      "出力ファイルまたはディレクトリのパス",
+      { default: "research" },
+    )
     .option("-m, --model <name:string>", "使用するモデル名", {
       default: "gemini-2.0-flash",
     })
@@ -54,29 +55,8 @@ async function main() {
           90, // スコアしきい値はデフォルト値を使用
         );
 
-        // 出力ディレクトリの作成
-        const outputDir = "./outputs";
-        try {
-          await Deno.mkdir(outputDir, { recursive: true });
-        } catch (e) {
-          if (!(e instanceof Deno.errors.AlreadyExists)) {
-            throw e;
-          }
-        }
-
-        // 出力ファイル名の決定
-        // generateFilenameFromTheme関数を使用してファイル名を生成
-        console.log("ファイル名を生成しています...");
-        const baseFilename = await generateFilenameFromTheme(apiKey, theme);
-
-        // 出力先が指定されている場合はそれを使用
-        let outputPath = options.output;
-
-        if (!outputPath) {
-          // generateUniqueFilename関数を使ってユニークなファイル名を生成
-          outputPath = await generateUniqueFilename(baseFilename, outputDir);
-          console.log(`出力ファイル名: ${outputPath.split("/").pop()}`);
-        }
+        // 出力ファイルパスの生成
+        const outputPath = await generate(theme, apiKey, options.output);
 
         // 処理結果を保存
         await Deno.writeTextFile(outputPath, processedContent);
