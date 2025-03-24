@@ -1,5 +1,6 @@
 // テーマからファイル名を生成するための機能
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { join } from "@std/path";
 
 /**
  * テーマから英語のファイル名を生成する関数
@@ -40,4 +41,75 @@ export async function generateFilenameFromTheme(
   const response = await result.response;
   const filename = response.text().trim();
   return filename;
+}
+
+/**
+ * ファイル名を自動生成し、重複する場合は数字を付加する
+ * @param baseFilename 基本となるファイル名（拡張子なし）
+ * @param outputDir 出力先ディレクトリ
+ * @param extension ファイル拡張子（デフォルトは.md）
+ * @returns 重複しないファイルパス
+ */
+export async function generateUniqueFilename(
+  baseFilename: string,
+  outputDir: string,
+  extension = ".md",
+): Promise<string> {
+  try {
+    // 既存の同名ファイルをチェック
+    const baseFilePath = join(outputDir, `${baseFilename}${extension}`);
+    const fileExists = await Deno.stat(baseFilePath)
+      .then(() => true)
+      .catch(() => false);
+
+    // 既存の類似ファイルを検索
+    const similarFiles = [];
+    const escExtension = extension.replace(/\./g, "\\.");
+    const regex = new RegExp(`^${baseFilename}-(\\d+)${escExtension}$`);
+
+    for await (const entry of Deno.readDir(outputDir)) {
+      if (entry.isFile) {
+        const match = entry.name.match(regex);
+        if (match) {
+          similarFiles.push({
+            name: entry.name,
+            number: parseInt(match[1], 10),
+          });
+        }
+      }
+    }
+
+    let outputFilename;
+    if (!fileExists && similarFiles.length === 0) {
+      // ファイルが存在しない場合は基本ファイル名を使用
+      outputFilename = `${baseFilename}${extension}`;
+    } else {
+      // 最大の番号を見つける
+      let maxNum = 0;
+      if (fileExists) {
+        // 基本ファイルが存在する場合は最低でも1
+        maxNum = 1;
+      }
+
+      // 既存の番号付きファイルから最大の番号を取得
+      for (const file of similarFiles) {
+        if (file.number > maxNum) {
+          maxNum = file.number;
+        }
+      }
+
+      // 次の番号を使用
+      outputFilename = `${baseFilename}-${maxNum + 1}${extension}`;
+    }
+
+    return join(outputDir, outputFilename);
+  } catch (error) {
+    // エラーが発生した場合はデフォルトのファイル名を使用
+    console.warn(
+      `ファイル名生成中にエラーが発生しました: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return join(outputDir, `${baseFilename}${extension}`);
+  }
 }

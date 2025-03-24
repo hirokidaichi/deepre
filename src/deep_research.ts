@@ -1,26 +1,18 @@
 // 調査機能の実装
-import { createGeminiClient } from "./gemini.ts";
-//import { CitationManager } from "./citations.ts";
+import {
+  GenerativeModel,
+  GoogleGenerativeAI,
+} from "npm:@google/generative-ai@0.24.0";
+import {
+  GeminiGroundingMetadata,
+  GroundingMetadata,
+  ResearchMetadata,
+  ResearchReport,
+  ResearchStep,
+} from "./types.ts";
+import { GroundingProcessor } from "./grounding.ts";
 
-// Geminiモデルのレスポンス型
-interface GeminiResponse {
-  text: () => string;
-}
-
-// Geminiモデルの型
-interface GeminiModel {
-  generateContent: (prompt: string) => Promise<{
-    response: GeminiResponse;
-  }>;
-}
-
-interface ResearchStep {
-  step: number;
-  content: string;
-  score: number;
-  missingInfo: string[];
-}
-
+// 調査コンテキストの型定義
 interface ResearchContext {
   question: string;
   currentFindings: string;
@@ -31,8 +23,8 @@ interface ResearchContext {
 
 // 調査計画を生成する関数
 async function generateResearchPlan(
-  model: GeminiModel,
-  question: string,
+  model: GenerativeModel,
+  theme: string,
 ): Promise<string> {
   const planPrompt =
     `あなたはプロフェッショナルなリサーチャーとして、以下のテーマについて調査を行います。
@@ -48,10 +40,10 @@ async function generateResearchPlan(
   - なぜその情報が重要なのか
   を明確にしてください。
 
-  調査テーマ: ${question}`;
+  調査テーマ: ${theme}`;
 
-  const planResult = await model.generateContent(planPrompt);
-  return planResult.response.text();
+  const response = await model.generateContent(planPrompt);
+  return response.response.text();
 }
 
 // 調査ステップのプロンプトを生成する関数
@@ -86,15 +78,15 @@ function generateStepPrompt(context: ResearchContext): string {
 
 // 調査結果を評価する関数
 async function evaluateResearch(
-  model: GeminiModel,
-  question: string,
-  findings: string,
+  model: GenerativeModel,
+  theme: string,
+  context: ResearchContext,
 ): Promise<{ score: number; missingInfo: string[] }> {
   const evaluationPrompt = `
-    プロフェッショナルなリサーチャーとして、以下の調査結果について、テーマ「${question}」に対する情報の充実度を評価してください。
+    プロフェッショナルなリサーチャーとして、以下の調査結果について、テーマ「${theme}」に対する情報の充実度を評価してください。
 
     調査結果:
-    ${findings}
+    ${context.currentFindings}
 
     以下の観点から評価を行い、回答してください：
     1. 情報の具体性と正確性（事実、数字、事例の充実度）
@@ -113,30 +105,59 @@ async function evaluateResearch(
   const evaluation = await model.generateContent(evaluationPrompt);
   const evaluationText = evaluation.response.text();
 
+  // 評価テキストからスコアと不足情報を抽出
   const scoreMatch = evaluationText.match(/<score>(\d+)<\/score>/);
   const score = scoreMatch ? parseInt(scoreMatch[1]) : 0;
 
   const missingInfo = evaluationText
     .split("\n")
-    .filter((line: string) => line.trim().startsWith("-"))
-    .map((line: string) => line.trim().substring(2));
+    .filter((line) => line.trim().startsWith("-"))
+    .map((line) => line.trim().substring(2));
 
   return { score, missingInfo };
 }
 
+// 1ステップの調査を実行する関数
+async function executeResearchStep(
+  model: GenerativeModel,
+  context: ResearchContext,
+): Promise<ResearchStep> {
+  const stepPrompt = generateStepPrompt(context);
+  const stepResult = await model.generateContent(stepPrompt);
+  const stepFindings = stepResult.response.text();
+
+  // 調査結果を現在の知見に追加
+  context.currentFindings = stepFindings;
+
+  // 調査結果の評価
+  const { score, missingInfo } = await evaluateResearch(
+    model,
+    context.question,
+    context,
+  );
+
+  return {
+    step: context.step,
+    content: stepFindings.replace(/\[\d+\]/g, ""), // 引用番号を削除
+    score,
+    missingInfo,
+  };
+}
+
 // 最終レポートを生成する関数
 async function generateFinalReport(
-  model: GeminiModel,
-  context: ResearchContext,
-): Promise<string> {
+  model: GenerativeModel,
+  theme: string,
+  researchSteps: ResearchStep[],
+): Promise<ResearchReport> {
   const finalPrompt =
     `プロフェッショナルなリサーチャーとして、以下のテーマに関する調査結果から、包括的な最終レポートを作成してください。
 
-  調査テーマ: ${context.question}
+  調査テーマ: ${theme}
 
   これまでの調査で以下の情報が得られています：
   ${
-      context.intermediateResults.map((result) =>
+      researchSteps.map((result) =>
         `===== ステップ${result.step}の調査結果（充実度スコア: ${result.score}）=====\n${result.content}`
       ).join("\n\n")
     }
@@ -148,30 +169,14 @@ async function generateFinalReport(
   レポートは、読み手が実践的に活用できる情報を提供することを心がけ、
   事実に基づいた客観的な分析と、実務に役立つ示唆を含めてください。`;
 
-  const finalResult = await model.generateContent(finalPrompt);
-  return finalResult.response.text();
-}
-
-// 1ステップの調査を実行する関数
-async function executeResearchStep(
-  model: GeminiModel,
-  context: ResearchContext,
-): Promise<ResearchStep> {
-  const stepPrompt = generateStepPrompt(context);
-  const stepResult = await model.generateContent(stepPrompt);
-  const stepFindings = stepResult.response.text();
-
-  const { score, missingInfo } = await evaluateResearch(
-    model,
-    context.question,
-    stepFindings,
-  );
+  const finalReport = await model.generateContent(finalPrompt);
+  const content = finalReport.response.text();
 
   return {
-    step: context.step,
-    content: stepFindings.replace(/\[\d+\]/g, ""),
-    score,
-    missingInfo,
+    content,
+    plan: "", // 後で設定
+    question: theme,
+    score: Math.max(...researchSteps.map((step) => step.score)),
   };
 }
 
@@ -179,19 +184,31 @@ async function executeResearchStep(
 export async function deepResearch(
   apiKey: string,
   researchQuestion: string,
-  maxIterations = 3,
-  model = "gemini-2.0-flash",
-  scoreThreshold = 95,
-) {
-  const geminiClient = createGeminiClient(apiKey, model);
-  const planModel = geminiClient.createPlanModel();
-  const researchModel = geminiClient.createResearchModel();
+  maxIterations: number = 3,
+  modelName: string = "gemini-2.0-flash",
+  scoreThreshold: number = 85,
+): Promise<{
+  report: ResearchReport;
+  metadata: ResearchMetadata;
+}> {
+  const genAI = new GoogleGenerativeAI(apiKey);
 
-  // 調査計画の生成
-  const researchPlan = await generateResearchPlan(planModel, researchQuestion);
-  console.log("【研究計画】\n", researchPlan);
+  // 検索機能付きモデルの作成
+  // @ts-ignore Gemini 2.0の検索機能は型定義が追いついていない
+  const model = genAI.getGenerativeModel({
+    model: modelName,
+    generationConfig: {
+      temperature: 0.2,
+      topP: 0.7,
+      topK: 40,
+      maxOutputTokens: 8192,
+    },
+    tools: [{
+      // @ts-ignore Google Search機能はGemini 2.0で使用可能
+      google_search: {},
+    }],
+  });
 
-  // 調査コンテキストの初期化
   const context: ResearchContext = {
     question: researchQuestion,
     currentFindings: "",
@@ -199,6 +216,10 @@ export async function deepResearch(
     currentScore: 0,
     step: 1,
   };
+
+  // 調査計画の生成
+  const researchPlan = await generateResearchPlan(model, researchQuestion);
+  console.log("【研究計画】\n", researchPlan);
 
   // 反復的な調査プロセスの実行
   while (
@@ -208,30 +229,124 @@ export async function deepResearch(
       `\n====== 調査ステップ ${context.step}/${maxIterations} 実行中 ======\n`,
     );
 
-    const stepResult = await executeResearchStep(researchModel, context);
+    const stepResult = await executeResearchStep(model, context);
 
     context.intermediateResults.push(stepResult);
     context.currentFindings = stepResult.content;
     context.currentScore = stepResult.score;
 
     console.log(`[INFO] ステップ ${context.step} の調査を完了しました`);
-    console.log(`[INFO] 情報充実度スコア: ${stepResult.score}`);
+    console.log(`[INFO] 情報充実度スコア: ${stepResult.score}/100`);
     console.log(
       `ステップ ${context.step} の調査結果:\n`,
       stepResult.content.substring(0, 300) + "...",
     );
 
+    if (stepResult.missingInfo.length > 0) {
+      console.log("\n[INFO] 不足している情報:");
+      stepResult.missingInfo.forEach((info) => console.log(`- ${info}`));
+    }
+
     context.step++;
   }
 
   // 最終レポートの生成
-  const finalReport = await generateFinalReport(researchModel, context);
+  const report = await generateFinalReport(
+    model,
+    researchQuestion,
+    context.intermediateResults,
+  );
+  report.plan = researchPlan;
 
-  return {
-    question: researchQuestion,
-    plan: researchPlan.replace(/\[\d+\]/g, ""),
-    intermediateResults: context.intermediateResults,
-    finalReport,
-    finalScore: context.currentScore,
+  // メタデータの準備
+  const finalContent = await model.generateContent(report.content);
+
+  // groundingMetadataの取得
+  // @ts-ignore Gemini 2.0の型定義が追いついていないため
+  const groundingMetadata =
+    finalContent.response.candidates?.[0]?.groundingMetadata || {};
+
+  const metadata: ResearchMetadata = {
+    steps: context.intermediateResults,
+    groundingMetadata,
+    totalSteps: context.step - 1,
   };
+
+  return { report, metadata };
+}
+
+/**
+ * GeminiGroundingMetadataをGroundingMetadataに変換するアダプタ関数
+ */
+function convertToGroundingMetadata(
+  geminiMetadata: GeminiGroundingMetadata,
+): GroundingMetadata {
+  // 空のグラウンディングメタデータを作成
+  const metadata: GroundingMetadata = {
+    groundingChunks: [],
+    groundingSupports: [],
+  };
+
+  // チャンク情報の変換
+  if (geminiMetadata.groundingChunks) {
+    metadata.groundingChunks = geminiMetadata.groundingChunks
+      .filter((chunk) => chunk.web?.uri && chunk.web?.title)
+      .map((chunk) => ({
+        web: {
+          uri: chunk.web!.uri!,
+          title: chunk.web!.title!,
+        },
+      }));
+  }
+
+  // サポート情報の変換
+  if (geminiMetadata.groundingSupports) {
+    metadata.groundingSupports = geminiMetadata.groundingSupports
+      .filter((support) => support.segment && support.groundingChunkIndices)
+      .map((support) => ({
+        segment: support.segment
+          ? {
+            startIndex: support.segment.startIndex || 0,
+            endIndex: support.segment.endIndex || 0,
+            text: support.segment.text,
+          }
+          : undefined,
+        groundingChunkIndices: support.groundingChunkIndices || [],
+        confidenceScores: support.confidenceScores,
+      }));
+  }
+
+  return metadata;
+}
+
+// グラウンディング情報を使用した調査実行関数
+export async function deepResearchWithGrounding(
+  apiKey: string,
+  researchQuestion: string,
+  maxIterations: number = 3,
+  modelName: string = "gemini-2.0-flash",
+  scoreThreshold: number = 85,
+): Promise<string> {
+  // 通常の調査を実行
+  const { report, metadata } = await deepResearch(
+    apiKey,
+    researchQuestion,
+    maxIterations,
+    modelName,
+    scoreThreshold,
+  );
+
+  // groundingMetadataを使用してレポートを処理
+  console.log("[INFO] グラウンディング処理を開始します");
+
+  // GeminiGroundingMetadataをGroundingMetadataに変換
+  const groundingMetadata = convertToGroundingMetadata(
+    metadata.groundingMetadata,
+  );
+
+  const processor = new GroundingProcessor(report.content, groundingMetadata);
+  const processedContent = await processor.processReport();
+  console.log("[INFO] グラウンディング処理が完了しました");
+
+  return processedContent;
 }

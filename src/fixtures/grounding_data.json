@@ -1,0 +1,37 @@
+{
+  "report": "ChatGPTは言語モデルとして優れた性能を発揮します。特に自然言語処理のタスクにおいて高い精度を示しています。また、最近の研究では、数学的な問題解決能力も向上していることが分かっています。",
+  "metadata": {
+    "groundingChunks": [
+      {
+        "web": {
+          "uri": "https://arxiv.org/abs/2303.12712",
+          "title": "GPT-4 Technical Report"
+        }
+      },
+      {
+        "web": {
+          "uri": "https://www.nature.com/articles/s42256-023-00712-7",
+          "title": "Mathematical capabilities of ChatGPT"
+        }
+      }
+    ],
+    "groundingSupports": [
+      {
+        "segment": {
+          "startIndex": 0,
+          "endIndex": 52
+        },
+        "groundingChunkIndices": [0],
+        "confidenceScores": [0.95]
+      },
+      {
+        "segment": {
+          "startIndex": 106,
+          "endIndex": 156
+        },
+        "groundingChunkIndices": [1],
+        "confidenceScores": [0.92]
+      }
+    ]
+  }
+}

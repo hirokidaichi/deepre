@@ -1,6 +1,5 @@
 // Gemini APIを利用するためのモジュール
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import type { Response } from "./citations.ts";
 
 // Gemini API設定用インターフェース
 export interface GenerationConfig {
@@ -8,10 +7,6 @@ export interface GenerationConfig {
   topP?: number;
   topK?: number;
   maxOutputTokens?: number;
-}
-
-export interface Result {
-  response: Response;
 }
 
 // Geminiクライアントを生成するファクトリー関数
