@@ -1,13 +1,13 @@
-import { assertEquals, assertRejects } from "@std/testing/asserts";
+import { assertEquals, assertRejects } from "@std/assert";
 import {
+  defaultFileSystem,
   determineOutputPathType,
-  OutputPathType,
   FileSystemDependency,
   GeminiDependency,
+  generate,
   generateFilenameFromTheme,
   generateUniqueFilename,
-  generate,
-  defaultFileSystem,
+  OutputPathType,
 } from "./generate-filename.ts";
 import { describe, it } from "@std/testing/bdd";
 import { join } from "@std/path";
@@ -105,10 +105,12 @@ describe("determineOutputPathType", () => {
   it("should use the provided FileSystemDependency", async () => {
     // FileSystemDependencyのモック作成
     const mockFileSystem: FileSystemDependency = {
-      stat: async (path: string) => {
-        return path.endsWith("dir") 
-          ? createMockFileInfo(true, false) // ディレクトリ
-          : createMockFileInfo(false, true); // ファイル
+      stat: (path: string) => {
+        return Promise.resolve(
+          path.endsWith("dir")
+            ? createMockFileInfo(true, false) // ディレクトリ
+            : createMockFileInfo(false, true),
+        ); // ファイル
       },
       mkdir: async () => {},
       readDir: async function* () {
@@ -116,18 +118,24 @@ describe("determineOutputPathType", () => {
       },
     };
 
-    const dirResult = await determineOutputPathType("/path/to/dir", mockFileSystem);
+    const dirResult = await determineOutputPathType(
+      "/path/to/dir",
+      mockFileSystem,
+    );
     assertEquals(dirResult, OutputPathType.DIRECTORY);
 
-    const fileResult = await determineOutputPathType("/path/to/file.txt", mockFileSystem);
+    const fileResult = await determineOutputPathType(
+      "/path/to/file.txt",
+      mockFileSystem,
+    );
     assertEquals(fileResult, OutputPathType.FILE);
   });
 
   it("should handle errors from FileSystemDependency", async () => {
     // エラーをスローするモック
     const errorFileSystem: FileSystemDependency = {
-      stat: async () => {
-        throw new Error("File not found");
+      stat: () => {
+        return Promise.reject(new Error("File not found"));
       },
       mkdir: async () => {},
       readDir: async function* () {
@@ -136,20 +144,26 @@ describe("determineOutputPathType", () => {
     };
 
     // 拡張子ありの場合はFILE
-    const fileResult = await determineOutputPathType("/path/to/error.txt", errorFileSystem);
+    const fileResult = await determineOutputPathType(
+      "/path/to/error.txt",
+      errorFileSystem,
+    );
     assertEquals(fileResult, OutputPathType.FILE);
 
     // 拡張子なしの場合はDIRECTORY
-    const dirResult = await determineOutputPathType("/path/to/error", errorFileSystem);
+    const dirResult = await determineOutputPathType(
+      "/path/to/error",
+      errorFileSystem,
+    );
     assertEquals(dirResult, OutputPathType.DIRECTORY);
   });
 
   it("should handle unusual FileInfo cases", async () => {
     // isDirectoryとisFileの両方がfalseの場合
     const mockFileSystem: FileSystemDependency = {
-      stat: async () => {
+      stat: () => {
         // シンボリックリンクなどの特殊ファイル
-        return createMockFileInfo(false, false);
+        return Promise.resolve(createMockFileInfo(false, false));
       },
       mkdir: async () => {},
       readDir: async function* () {
@@ -158,11 +172,17 @@ describe("determineOutputPathType", () => {
     };
 
     // 拡張子ありの場合はFILE
-    const fileResult = await determineOutputPathType("/path/to/unusual.txt", mockFileSystem);
+    const fileResult = await determineOutputPathType(
+      "/path/to/unusual.txt",
+      mockFileSystem,
+    );
     assertEquals(fileResult, OutputPathType.FILE);
 
     // 拡張子なしの場合はDIRECTORY
-    const dirResult = await determineOutputPathType("/path/to/unusual", mockFileSystem);
+    const dirResult = await determineOutputPathType(
+      "/path/to/unusual",
+      mockFileSystem,
+    );
     assertEquals(dirResult, OutputPathType.DIRECTORY);
   });
 });
@@ -170,14 +190,19 @@ describe("determineOutputPathType", () => {
 describe("generateFilenameFromTheme", () => {
   it("should generate a filename based on the theme using a mock GeminiDependency", async () => {
     const mockGeminiApi: GeminiDependency = {
-      generateContent: async () => ({
-        response: {
-          text: () => "test-filename-generated",
-        },
-      }),
+      generateContent: () =>
+        Promise.resolve({
+          response: {
+            text: () => "test-filename-generated",
+          },
+        }),
     };
 
-    const result = await generateFilenameFromTheme("dummy-api-key", "テストテーマ", mockGeminiApi);
+    const result = await generateFilenameFromTheme(
+      "dummy-api-key",
+      "テストテーマ",
+      mockGeminiApi,
+    );
     assertEquals(result, "test-filename-generated");
   });
 
@@ -186,18 +211,22 @@ describe("generateFilenameFromTheme", () => {
   it("should initialize API with parameters when not provided", async () => {
     // モックGeminiDependencyを生成する関数
     const createMockGeminiDependency = (): GeminiDependency => ({
-      generateContent: async () => ({
-        response: {
-          text: () => "mocked-filename-without-api",
-        },
-      }),
+      generateContent: () =>
+        Promise.resolve({
+          response: {
+            text: () => "mocked-filename-without-api",
+          },
+        }),
     });
 
     const mockTheme = "テストテーマ";
     const mockApiKey = "dummy-api-key";
 
     // テスト用の関数を作成（実際のGoogleGenerativeAIを使わないバージョン）
-    const testGenerateFilenameWithoutAPI = async (apiKey: string, theme: string): Promise<string> => {
+    const testGenerateFilenameWithoutAPI = async (
+      apiKey: string,
+      theme: string,
+    ): Promise<string> => {
       // API呼び出しの部分ををモックオブジェクトで置き換える
       const mockGeminiApi = createMockGeminiDependency();
       return await generateFilenameFromTheme(apiKey, theme, mockGeminiApi);
@@ -211,10 +240,10 @@ describe("generateFilenameFromTheme", () => {
 describe("generateUniqueFilename", () => {
   it("should generate a base filename when no similar files exist", async () => {
     const mockFileSystem: FileSystemDependency = {
-      stat: async () => {
+      stat: () => {
         throw new Error("File not found");
       },
-      mkdir: async () => {},
+      mkdir: () => Promise.resolve(),
       readDir: async function* () {
         yield* [];
       },
@@ -231,8 +260,8 @@ describe("generateUniqueFilename", () => {
 
   it("should increment number when base file exists", async () => {
     const mockFileSystem: FileSystemDependency = {
-      stat: async () => createMockFileInfo(false, true),
-      mkdir: async () => {},
+      stat: () => Promise.resolve(createMockFileInfo(false, true)),
+      mkdir: () => Promise.resolve(),
       readDir: async function* () {
         yield* [];
       },
@@ -249,8 +278,8 @@ describe("generateUniqueFilename", () => {
 
   it("should find the highest number in similar files", async () => {
     const mockFileSystem: FileSystemDependency = {
-      stat: async () => createMockFileInfo(false, true),
-      mkdir: async () => {},
+      stat: () => Promise.resolve(createMockFileInfo(false, true)),
+      mkdir: () => Promise.resolve(),
       readDir: async function* () {
         yield {
           name: "test-base-3.md",
@@ -284,13 +313,15 @@ describe("generateUniqueFilename", () => {
 
   it("should handle errors gracefully", async () => {
     const errorFileSystem: FileSystemDependency = {
-      stat: async () => {
-        throw new Error("Permission denied");
+      stat: () => {
+        return Promise.reject(new Error("Permission denied"));
       },
-      mkdir: async () => {
-        throw new Error("Permission denied");
+      mkdir: () => {
+        return Promise.reject(new Error("Permission denied"));
       },
       readDir: async function* () {
+        // 例外をスローする前にyieldすることで、require-yieldエラーを回避
+        yield { name: "", isFile: false, isDirectory: false, isSymlink: false };
         throw new Error("Permission denied");
       },
     };
@@ -321,14 +352,16 @@ describe("generateUniqueFilename", () => {
   it("should handle non-Error exceptions", async () => {
     const stringException = "StringException";
     const errorFileSystem: FileSystemDependency = {
-      stat: async () => {
-        throw stringException;  // ErrorでないException
+      stat: () => {
+        return Promise.reject(stringException); // ErrorでないException
       },
-      mkdir: async () => {
-        throw stringException;  // 同じ文字列例外
+      mkdir: () => {
+        return Promise.reject(stringException); // 同じ文字列例外
       },
       readDir: async function* () {
-        throw stringException;  // 同じ文字列例外
+        // 例外をスローする前にyieldすることで、require-yieldエラーを回避
+        yield { name: "", isFile: false, isDirectory: false, isSymlink: false };
+        throw stringException; // 同じ文字列例外
       },
     };
 
@@ -347,10 +380,10 @@ describe("generateUniqueFilename", () => {
         errorFileSystem,
       );
       assertEquals(result, "/output/dir/test-base.md");
-      
+
       // メッセージが捕捉されていることを確認
       assertEquals(capturedMessages.length, 1);
-      
+
       // メッセージに文字列例外が含まれていることを確認
       assertEquals(capturedMessages[0].includes(stringException), true);
     } finally {
@@ -363,7 +396,7 @@ describe("generateUniqueFilename", () => {
 describe("generate", () => {
   it("should return the file path when output path is of FILE type", async () => {
     const mockDependencies = {
-      determineOutputPathType: async () => OutputPathType.FILE,
+      determineOutputPathType: () => Promise.resolve(OutputPathType.FILE),
     };
 
     const result = await generate(
@@ -378,15 +411,16 @@ describe("generate", () => {
   it("should generate filename from theme when output path is a directory", async () => {
     const mockDependencies = {
       fileSystem: {
-        stat: async () => createMockFileInfo(true, false),
-        mkdir: async () => {},
+        stat: () => Promise.resolve(createMockFileInfo(true, false)),
+        mkdir: () => Promise.resolve(),
         readDir: async function* () {
           yield* [];
         },
       },
-      determineOutputPathType: async () => OutputPathType.DIRECTORY,
-      generateFilenameFromTheme: async () => "generated-filename",
-      generateUniqueFilename: async () => "/path/to/dir/generated-filename.md",
+      determineOutputPathType: () => Promise.resolve(OutputPathType.DIRECTORY),
+      generateFilenameFromTheme: () => Promise.resolve("generated-filename"),
+      generateUniqueFilename: () =>
+        Promise.resolve("/path/to/dir/generated-filename.md"),
     };
 
     const result = await generate(
@@ -401,16 +435,17 @@ describe("generate", () => {
   it("should use default output directory when no output path is provided", async () => {
     const mockDependencies = {
       fileSystem: {
-        stat: async () => {
-          throw new Error("File not found");
+        stat: () => {
+          return Promise.reject(new Error("File not found"));
         },
-        mkdir: async () => {},
+        mkdir: () => Promise.resolve(),
         readDir: async function* () {
           yield* [];
         },
       },
-      generateFilenameFromTheme: async () => "generated-filename",
-      generateUniqueFilename: async () => "./outputs/generated-filename.md",
+      generateFilenameFromTheme: () => Promise.resolve("generated-filename"),
+      generateUniqueFilename: () =>
+        Promise.resolve("./outputs/generated-filename.md"),
     };
 
     const result = await generate(
@@ -424,10 +459,10 @@ describe("generate", () => {
 
   it("should handle directory creation errors", async () => {
     const mockFileSystem: FileSystemDependency = {
-      stat: async () => createMockFileInfo(false, false),
-      mkdir: async () => {
+      stat: () => Promise.resolve(createMockFileInfo(false, false)),
+      mkdir: () => {
         // 一般的なエラー（AlreadyExistsではない）
-        throw new Error("Directory creation failed");
+        return Promise.reject(new Error("Directory creation failed"));
       },
       readDir: async function* () {
         yield* [];
@@ -436,13 +471,20 @@ describe("generate", () => {
 
     const mockDependencies = {
       fileSystem: mockFileSystem,
-      determineOutputPathType: async () => OutputPathType.DIRECTORY,
-      generateFilenameFromTheme: async () => "generated-filename",
-      generateUniqueFilename: async () => "/path/to/dir/generated-filename.md",
+      determineOutputPathType: () => Promise.resolve(OutputPathType.DIRECTORY),
+      generateFilenameFromTheme: () => Promise.resolve("generated-filename"),
+      generateUniqueFilename: () =>
+        Promise.resolve("/path/to/dir/generated-filename.md"),
     };
 
     await assertRejects(
-      () => generate("テストテーマ", "dummy-api-key", "/path/to/dir", mockDependencies),
+      () =>
+        generate(
+          "テストテーマ",
+          "dummy-api-key",
+          "/path/to/dir",
+          mockDependencies,
+        ),
       Error,
       "Directory creation failed",
     );
@@ -458,9 +500,11 @@ describe("generate", () => {
     }
 
     const mockFileSystem: FileSystemDependency = {
-      stat: async () => createMockFileInfo(false, false),
-      mkdir: async () => {
-        throw new AlreadyExistsError("Directory already exists");
+      stat: () => Promise.resolve(createMockFileInfo(false, false)),
+      mkdir: () => {
+        return Promise.reject(
+          new AlreadyExistsError("Directory already exists"),
+        );
       },
       readDir: async function* () {
         yield* [];
@@ -470,16 +514,24 @@ describe("generate", () => {
     // AlreadyExistsエラーのためのモックを作成
     const originalErrors = Deno.errors;
     try {
-      (Deno as any).errors = {
+      const denoWithErrors = Deno as unknown as {
+        errors: typeof Deno.errors & {
+          AlreadyExists: typeof AlreadyExistsError;
+        };
+      };
+      denoWithErrors.errors = {
         ...Deno.errors,
-        AlreadyExists: AlreadyExistsError,
+        AlreadyExists:
+          AlreadyExistsError as unknown as typeof Deno.errors.AlreadyExists,
       };
 
       const mockDependencies = {
         fileSystem: mockFileSystem,
-        determineOutputPathType: async () => OutputPathType.DIRECTORY,
-        generateFilenameFromTheme: async () => "generated-filename",
-        generateUniqueFilename: async () => "/custom/dir/generated-filename.md",
+        determineOutputPathType: () =>
+          Promise.resolve(OutputPathType.DIRECTORY),
+        generateFilenameFromTheme: () => Promise.resolve("generated-filename"),
+        generateUniqueFilename: () =>
+          Promise.resolve("/custom/dir/generated-filename.md"),
       };
 
       // AlreadyExistsエラーは無視され、処理が続行されるはず
@@ -492,7 +544,8 @@ describe("generate", () => {
       assertEquals(result, "/custom/dir/generated-filename.md");
     } finally {
       // 元のDeno.errorsを復元
-      (Deno as any).errors = originalErrors;
+      const denoToRestore = Deno as unknown as { errors: typeof Deno.errors };
+      denoToRestore.errors = originalErrors;
     }
   });
 });

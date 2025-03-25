@@ -53,14 +53,14 @@ deno task check-all
   ```typescript
   // Good
   interface Config {
-     timeout: number;
-     retries: number;
+    timeout: number;
+    retries: number;
   }
 
   // Avoid
   type Config = {
-     timeout: number;
-     retries: number;
+    timeout: number;
+    retries: number;
   };
   ```
 
@@ -70,21 +70,21 @@ deno task check-all
   ```typescript
   // Good
   async function fetchData() {
-     try {
-        const response = await fetch(url);
-        return await response.json();
-     } catch (error) {
-        throw new Error(`データの取得に失敗: ${error.message}`);
-     }
+    try {
+      const response = await fetch(url);
+      return await response.json();
+    } catch (error) {
+      throw new Error(`データの取得に失敗: ${error.message}`);
+    }
   }
 
   // Avoid
   function fetchData() {
-     return fetch(url)
-        .then((response) => response.json())
-        .catch((error) => {
-           throw new Error(`データの取得に失敗: ${error.message}`);
-        });
+    return fetch(url)
+      .then((response) => response.json())
+      .catch((error) => {
+        throw new Error(`データの取得に失敗: ${error.message}`);
+      });
   }
   ```
 
@@ -95,12 +95,12 @@ deno task check-all
   ```typescript
   // Good
   try {
-     await processFile(path);
+    await processFile(path);
   } catch (error) {
-     if (error instanceof Deno.errors.NotFound) {
-        throw new Error(`ファイルが見つかりません: ${path}`);
-     }
-     throw new Error(`ファイル処理中にエラーが発生: ${error.message}`);
+    if (error instanceof Deno.errors.NotFound) {
+      throw new Error(`ファイルが見つかりません: ${path}`);
+    }
+    throw new Error(`ファイル処理中にエラーが発生: ${error.message}`);
   }
   ```
 
@@ -116,10 +116,10 @@ deno task check-all
    * @throws {Error} ユーザーが見つからない場合
    */
   async function processUser(
-     userId: string,
-     options: ProcessOptions,
+    userId: string,
+    options: ProcessOptions,
   ): Promise<UserData> {
-     // 実装
+    // 実装
   }
   ```
 
